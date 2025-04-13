@@ -1,6 +1,10 @@
 import os
+from dotenv import load_dotenv
 import numpy as np
 from openai import OpenAI
+
+# Load environment variables from .env file
+load_dotenv()
 
 def setup_openai():
     """

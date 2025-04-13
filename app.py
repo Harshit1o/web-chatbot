@@ -1,5 +1,10 @@
 import streamlit as st
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from scraper import scrape_website
 from vector_store import process_text, create_faiss_index, search_similar_chunks
 from llm_utils import get_embeddings, generate_response

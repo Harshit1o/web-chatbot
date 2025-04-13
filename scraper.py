@@ -1,10 +1,14 @@
 import os
+from dotenv import load_dotenv
 import trafilatura
 import requests
 from bs4 import BeautifulSoup
 import json
 import re
 import logging
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

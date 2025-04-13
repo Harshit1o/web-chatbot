@@ -1,5 +1,10 @@
 import os
 import time
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
