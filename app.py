@@ -3,6 +3,7 @@ import os
 from scraper import scrape_website
 from vector_store import process_text, create_faiss_index, search_similar_chunks
 from llm_utils import get_embeddings, generate_response
+import database as db
 import time
 
 # Set page title and configuration
@@ -27,6 +28,10 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "website_url" not in st.session_state:
     st.session_state.website_url = ""
+if "website_id" not in st.session_state:
+    st.session_state.website_id = None
+if "chat_session_id" not in st.session_state:
+    st.session_state.chat_session_id = None
 
 # Function to create the chatbot
 def create_chatbot(url):
@@ -42,6 +47,13 @@ def create_chatbot(url):
             st.error("Failed to process website content.")
             return False
         
+        # Store website and chunks in database
+        website_id = db.get_or_create_website(url, website_content)
+        db.store_website_chunks(website_id, chunks)
+        
+        # Create a new chat session
+        chat_session_id = db.create_chat_session(website_id)
+        
         # Get embeddings and create FAISS index
         try:
             index = create_faiss_index(chunks)
@@ -49,6 +61,9 @@ def create_chatbot(url):
             st.session_state.chunks = chunks
             st.session_state.chatbot_ready = True
             st.session_state.website_url = url
+            st.session_state.website_id = website_id
+            st.session_state.chat_session_id = chat_session_id
+            st.session_state.chat_history = []  # Reset chat history for new session
             return True
         except Exception as e:
             st.error(f"Error creating embeddings: {str(e)}")
