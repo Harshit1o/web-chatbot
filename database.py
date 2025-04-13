@@ -177,5 +177,18 @@ def get_chat_history(session_id):
     session.close()
     return history
 
+def get_chat_sessions_for_website(website_id):
+    """
+    Get all chat sessions for a website
+    """
+    session = Session()
+    chat_sessions = session.query(ChatSession).filter(
+        ChatSession.website_id == website_id
+    ).order_by(ChatSession.created_at.desc()).all()
+    
+    sessions = [(chat.id, chat.created_at) for chat in chat_sessions]
+    session.close()
+    return sessions
+
 # Initialize the database on import
 init_db()

@@ -81,13 +81,71 @@ with st.container():
 
 # Process the URL when the button is clicked
 if create_btn and url:
-    success = create_chatbot(url)
-    if success:
-        st.success("Chatbot created successfully! You can now ask questions about the website.")
-        st.rerun()
+    # Check if we already have this website in the database
+    website_id = db.get_or_create_website(url)
+    
+    # If the website already exists and has chunks, we can load from database
+    existing_chunks = db.get_website_chunks(website_id)
+    
+    if existing_chunks:
+        with st.spinner("Loading website data from database..."):
+            # Create a new chat session
+            chat_session_id = db.create_chat_session(website_id)
+            
+            # Process the chunks and create index
+            try:
+                index = create_faiss_index(existing_chunks)
+                st.session_state.index = index
+                st.session_state.chunks = existing_chunks
+                st.session_state.chatbot_ready = True
+                st.session_state.website_url = url
+                st.session_state.website_id = website_id
+                st.session_state.chat_session_id = chat_session_id
+                st.session_state.chat_history = []  # Start with empty chat for new session
+                
+                st.success("Chatbot loaded from database! You can now ask questions about the website.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error creating embeddings: {str(e)}")
+    else:
+        # Website doesn't exist or has no chunks, create from scratch
+        success = create_chatbot(url)
+        if success:
+            st.success("Chatbot created successfully! You can now ask questions about the website.")
+            st.rerun()
 
 # Chat interface
 if st.session_state.chatbot_ready:
+    # Add sidebar with chat sessions
+    with st.sidebar:
+        st.markdown("### Previous Chat Sessions")
+        if st.session_state.website_id:
+            chat_sessions = db.get_chat_sessions_for_website(st.session_state.website_id)
+            
+            # Format datetime to be more readable
+            formatted_sessions = []
+            for session_id, created_at in chat_sessions:
+                # Format the datetime to show only date and time
+                formatted_date = created_at.strftime("%Y-%m-%d %H:%M")
+                formatted_sessions.append((session_id, formatted_date))
+            
+            # Create a selectbox to choose a session
+            session_options = ["Current Session"] + [f"Session from {date}" for _, date in formatted_sessions]
+            
+            selected_session = st.selectbox("Select a chat session", session_options)
+            
+            # If a previous session is selected, load its history
+            if selected_session != "Current Session":
+                selected_index = session_options.index(selected_session) - 1  # Adjust for "Current Session"
+                selected_session_id = formatted_sessions[selected_index][0]
+                
+                if selected_session_id != st.session_state.chat_session_id:
+                    # Load chat history from the selected session
+                    st.session_state.chat_history = db.get_chat_history(selected_session_id)
+                    st.session_state.chat_session_id = selected_session_id
+                    st.rerun()
+    
+    # Main content area
     st.markdown(f"### Chat with your AI assistant about: {st.session_state.website_url}")
     
     # Display chat history
@@ -115,7 +173,10 @@ if st.session_state.chatbot_ready:
     if st.button("Generate Response") and st.session_state.current_query and not st.session_state.response_generated:
         # Add user query to chat history if not already added
         if not st.session_state.chat_history or st.session_state.chat_history[-1][0] != "user" or st.session_state.chat_history[-1][1] != st.session_state.current_query:
+            # Add user message to session state
             st.session_state.chat_history.append(("user", st.session_state.current_query))
+            # Save user message to database
+            db.add_chat_message(st.session_state.chat_session_id, "user", st.session_state.current_query)
         
         # Generate response
         with st.spinner("Generating response..."):
@@ -134,8 +195,11 @@ if st.session_state.chatbot_ready:
                 # Generate response using OpenAI
                 response = generate_response(st.session_state.current_query, context, st.session_state.website_url)
                 
-                # Add response to chat history
+                # Add response to chat history in session state
                 st.session_state.chat_history.append(("ai", response))
+                
+                # Save AI response to database
+                db.add_chat_message(st.session_state.chat_session_id, "ai", response)
                 
                 # Mark response as generated to prevent multiple generations
                 st.session_state.response_generated = True
@@ -151,4 +215,6 @@ if st.session_state.chatbot_ready:
         st.session_state.chunks = []
         st.session_state.chat_history = []
         st.session_state.website_url = ""
+        st.session_state.website_id = None
+        st.session_state.chat_session_id = None
         st.rerun()
