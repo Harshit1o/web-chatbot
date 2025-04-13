@@ -361,6 +361,7 @@ if st.session_state.chatbot_ready:
     
     # Reset chatbot button
     if st.button("Create new chatbot"):
+        # Reset main state variables
         st.session_state.chatbot_ready = False
         st.session_state.index = None
         st.session_state.chunks = []
@@ -368,5 +369,15 @@ if st.session_state.chatbot_ready:
         st.session_state.website_url = ""
         st.session_state.website_id = None
         st.session_state.chat_session_id = None
+        
+        # Reset query and response tracking
+        st.session_state.current_query = ""
+        st.session_state.response_generated = False
+        
+        # Reset all debug information
         st.session_state.content_stats = {}
+        st.session_state.last_query_info = {}
+        st.session_state.last_context = ""
+        st.session_state.last_distance_info = ""
+        
         st.rerun()
