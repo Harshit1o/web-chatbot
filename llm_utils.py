@@ -1,23 +1,23 @@
 import os
-import google.generativeai as genai
 import numpy as np
+from openai import OpenAI
 
-def setup_gemini():
+def setup_openai():
     """
-    Set up the Gemini API client.
+    Set up the OpenAI API client.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables")
+        raise ValueError("OPENAI_API_KEY not found in environment variables")
     
-    genai.configure(api_key=api_key)
+    return OpenAI(api_key=api_key)
 
-# Initialize the Gemini API
-setup_gemini()
+# Initialize the OpenAI client
+client = setup_openai()
 
 def get_embeddings(text: str) -> list:
     """
-    Get embeddings for text using Gemini.
+    Get embeddings for text using OpenAI.
     
     Args:
         text (str): Text to get embeddings for
@@ -26,19 +26,21 @@ def get_embeddings(text: str) -> list:
         list: Embedding vector for the text
     """
     try:
-        # Use Gemini to generate embeddings
-        embedding_model = genai.get_generative_model("embedding-001")
-        embedding = embedding_model.embed_content(text)
+        # Use OpenAI to generate embeddings
+        response = client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=text
+        )
         
         # Extract and return the embedding values
-        return embedding.embedding
+        return response.data[0].embedding
     except Exception as e:
         print(f"Error generating embeddings: {str(e)}")
         raise
 
 def generate_response(query: str, context: str, website_url: str) -> str:
     """
-    Generate a response to a query using Gemini.
+    Generate a response to a query using OpenAI GPT-4o-mini.
     
     Args:
         query (str): User's question
@@ -64,11 +66,18 @@ def generate_response(query: str, context: str, website_url: str) -> str:
         that question" instead of making up an answer. Your answer should be helpful, concise, and accurate.
         """
         
-        # Use Gemini to generate a response
-        generation_model = genai.get_generative_model("gemini-pro")
-        response = generation_model.generate_content(prompt)
+        # Use OpenAI GPT-4o-mini to generate a response
+        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Using GPT-4o-mini as requested
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that answers questions about website content."},
+                {"role": "user", "content": prompt}
+            ]
+        )
         
-        return response.text
+        return response.choices[0].message.content
     except Exception as e:
         print(f"Error generating response: {str(e)}")
         return f"I encountered an error while generating a response: {str(e)}"
