@@ -81,38 +81,42 @@ with st.container():
 
 # Process the URL when the button is clicked
 if create_btn and url:
-    # Check if we already have this website in the database
-    website_id = db.get_or_create_website(url)
-    
-    # If the website already exists and has chunks, we can load from database
-    existing_chunks = db.get_website_chunks(website_id)
-    
-    if existing_chunks:
-        with st.spinner("Loading website data from database..."):
-            # Create a new chat session
-            chat_session_id = db.create_chat_session(website_id)
-            
-            # Process the chunks and create index
-            try:
-                index = create_faiss_index(existing_chunks)
-                st.session_state.index = index
-                st.session_state.chunks = existing_chunks
-                st.session_state.chatbot_ready = True
-                st.session_state.website_url = url
-                st.session_state.website_id = website_id
-                st.session_state.chat_session_id = chat_session_id
-                st.session_state.chat_history = []  # Start with empty chat for new session
+    try:
+        # Check if we already have this website in the database
+        with st.spinner("Checking database for existing website data..."):
+            website_id = db.get_or_create_website(url)
+        
+            # If the website already exists and has chunks, we can load from database
+            existing_chunks = db.get_website_chunks(website_id)
+        
+        if existing_chunks:
+            with st.spinner("Loading website data from database..."):
+                # Create a new chat session
+                chat_session_id = db.create_chat_session(website_id)
                 
-                st.success("Chatbot loaded from database! You can now ask questions about the website.")
+                # Process the chunks and create index
+                try:
+                    index = create_faiss_index(existing_chunks)
+                    st.session_state.index = index
+                    st.session_state.chunks = existing_chunks
+                    st.session_state.chatbot_ready = True
+                    st.session_state.website_url = url
+                    st.session_state.website_id = website_id
+                    st.session_state.chat_session_id = chat_session_id
+                    st.session_state.chat_history = []  # Start with empty chat for new session
+                    
+                    st.success("Chatbot loaded from database! You can now ask questions about the website.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error creating embeddings: {str(e)}")
+        else:
+            # Website doesn't exist or has no chunks, create from scratch
+            success = create_chatbot(url)
+            if success:
+                st.success("Chatbot created successfully! You can now ask questions about the website.")
                 st.rerun()
-            except Exception as e:
-                st.error(f"Error creating embeddings: {str(e)}")
-    else:
-        # Website doesn't exist or has no chunks, create from scratch
-        success = create_chatbot(url)
-        if success:
-            st.success("Chatbot created successfully! You can now ask questions about the website.")
-            st.rerun()
+    except Exception as e:
+        st.error(f"Database error: {str(e)}. Please try again later.")
 
 # Chat interface
 if st.session_state.chatbot_ready:
@@ -120,30 +124,39 @@ if st.session_state.chatbot_ready:
     with st.sidebar:
         st.markdown("### Previous Chat Sessions")
         if st.session_state.website_id:
-            chat_sessions = db.get_chat_sessions_for_website(st.session_state.website_id)
-            
-            # Format datetime to be more readable
-            formatted_sessions = []
-            for session_id, created_at in chat_sessions:
-                # Format the datetime to show only date and time
-                formatted_date = created_at.strftime("%Y-%m-%d %H:%M")
-                formatted_sessions.append((session_id, formatted_date))
-            
-            # Create a selectbox to choose a session
-            session_options = ["Current Session"] + [f"Session from {date}" for _, date in formatted_sessions]
-            
-            selected_session = st.selectbox("Select a chat session", session_options)
-            
-            # If a previous session is selected, load its history
-            if selected_session != "Current Session":
-                selected_index = session_options.index(selected_session) - 1  # Adjust for "Current Session"
-                selected_session_id = formatted_sessions[selected_index][0]
+            try:
+                chat_sessions = db.get_chat_sessions_for_website(st.session_state.website_id)
                 
-                if selected_session_id != st.session_state.chat_session_id:
-                    # Load chat history from the selected session
-                    st.session_state.chat_history = db.get_chat_history(selected_session_id)
-                    st.session_state.chat_session_id = selected_session_id
-                    st.rerun()
+                # Format datetime to be more readable
+                formatted_sessions = []
+                for session_id, created_at in chat_sessions:
+                    # Format the datetime to show only date and time
+                    formatted_date = created_at.strftime("%Y-%m-%d %H:%M")
+                    formatted_sessions.append((session_id, formatted_date))
+                
+                if formatted_sessions:
+                    # Create a selectbox to choose a session
+                    session_options = ["Current Session"] + [f"Session from {date}" for _, date in formatted_sessions]
+                    
+                    selected_session = st.selectbox("Select a chat session", session_options)
+                    
+                    # If a previous session is selected, load its history
+                    if selected_session != "Current Session":
+                        try:
+                            selected_index = session_options.index(selected_session) - 1  # Adjust for "Current Session"
+                            selected_session_id = formatted_sessions[selected_index][0]
+                            
+                            if selected_session_id != st.session_state.chat_session_id:
+                                # Load chat history from the selected session
+                                st.session_state.chat_history = db.get_chat_history(selected_session_id)
+                                st.session_state.chat_session_id = selected_session_id
+                                st.rerun()
+                        except Exception as e:
+                            st.sidebar.error(f"Error loading chat session: {str(e)}")
+                else:
+                    st.sidebar.info("No previous chat sessions found for this website.")
+            except Exception as e:
+                st.sidebar.error(f"Error retrieving chat sessions: {str(e)}")
     
     # Main content area
     st.markdown(f"### Chat with your AI assistant about: {st.session_state.website_url}")

@@ -1,13 +1,41 @@
 import os
+import time
 from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, scoped_session
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 import datetime
+import logging
 
-# Create database connection
-db_url = os.environ.get("DATABASE_URL")
-engine = create_engine(db_url)
-Session = sessionmaker(bind=engine)
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create database connection with retry logic
+def get_engine():
+    db_url = os.environ.get("DATABASE_URL")
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            engine = create_engine(db_url, pool_pre_ping=True, pool_recycle=3600)
+            # Test the connection
+            connection = engine.connect()
+            connection.close()
+            logger.info("Database connection established successfully")
+            return engine
+        except OperationalError as e:
+            logger.warning(f"Database connection attempt {attempt+1}/{max_retries} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                logger.error("Failed to connect to database after multiple attempts")
+                raise
+
+engine = get_engine()
+session_factory = sessionmaker(bind=engine)
+Session = scoped_session(session_factory)
 Base = declarative_base()
 
 class Website(Base):
@@ -84,7 +112,13 @@ class ChatMessage(Base):
 
 # Create database tables
 def init_db():
-    Base.metadata.create_all(engine)
+    try:
+        Base.metadata.create_all(engine)
+        logger.info("Database tables created successfully")
+    except SQLAlchemyError as e:
+        logger.error(f"Error creating database tables: {str(e)}")
+        # Don't raise here to allow the application to start even if tables can't be created initially
+        # They might be created later when the connection is stable
 
 # Database operations
 def get_or_create_website(url, content=None):
@@ -92,103 +126,150 @@ def get_or_create_website(url, content=None):
     Get a website by URL or create it if it doesn't exist
     """
     session = Session()
-    website = session.query(Website).filter(Website.url == url).first()
-    
-    if not website:
-        website = Website(url=url, content=content)
-        session.add(website)
-        session.commit()
-    
-    website_id = website.id
-    session.close()
-    return website_id
+    try:
+        website = session.query(Website).filter(Website.url == url).first()
+        
+        if not website:
+            website = Website(url=url, content=content)
+            session.add(website)
+            session.commit()
+            logger.info(f"Created new website record for URL: {url}")
+        else:
+            logger.info(f"Found existing website record for URL: {url}")
+        
+        website_id = website.id
+        return website_id
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Database error in get_or_create_website: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def store_website_chunks(website_id, chunks):
     """
     Store content chunks for a website
     """
     session = Session()
-    
-    # Delete existing chunks for this website
-    session.query(ContentChunk).filter(ContentChunk.website_id == website_id).delete()
-    
-    # Add new chunks
-    for i, chunk_text in enumerate(chunks):
-        chunk = ContentChunk(
-            website_id=website_id,
-            chunk_text=chunk_text,
-            chunk_index=i
-        )
-        session.add(chunk)
-    
-    session.commit()
-    session.close()
+    try:
+        # Delete existing chunks for this website
+        session.query(ContentChunk).filter(ContentChunk.website_id == website_id).delete()
+        
+        # Add new chunks
+        for i, chunk_text in enumerate(chunks):
+            chunk = ContentChunk(
+                website_id=website_id,
+                chunk_text=chunk_text,
+                chunk_index=i
+            )
+            session.add(chunk)
+        
+        session.commit()
+        logger.info(f"Stored {len(chunks)} chunks for website_id: {website_id}")
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Database error in store_website_chunks: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def get_website_chunks(website_id):
     """
     Get all content chunks for a website
     """
     session = Session()
-    chunks = session.query(ContentChunk).filter(
-        ContentChunk.website_id == website_id
-    ).order_by(ContentChunk.chunk_index).all()
-    
-    chunk_texts = [chunk.chunk_text for chunk in chunks]
-    session.close()
-    return chunk_texts
+    try:
+        chunks = session.query(ContentChunk).filter(
+            ContentChunk.website_id == website_id
+        ).order_by(ContentChunk.chunk_index).all()
+        
+        chunk_texts = [chunk.chunk_text for chunk in chunks]
+        logger.info(f"Retrieved {len(chunk_texts)} chunks for website_id: {website_id}")
+        return chunk_texts
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_website_chunks: {str(e)}")
+        return []
+    finally:
+        session.close()
 
 def create_chat_session(website_id):
     """
     Create a new chat session for a website
     """
     session = Session()
-    chat_session = ChatSession(website_id=website_id)
-    session.add(chat_session)
-    session.commit()
-    
-    session_id = chat_session.id
-    session.close()
-    return session_id
+    try:
+        chat_session = ChatSession(website_id=website_id)
+        session.add(chat_session)
+        session.commit()
+        
+        session_id = chat_session.id
+        logger.info(f"Created new chat session {session_id} for website_id: {website_id}")
+        return session_id
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Database error in create_chat_session: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def add_chat_message(session_id, role, content):
     """
     Add a message to a chat session
     """
     session = Session()
-    message = ChatMessage(
-        session_id=session_id,
-        role=role,
-        content=content
-    )
-    session.add(message)
-    session.commit()
-    session.close()
+    try:
+        message = ChatMessage(
+            session_id=session_id,
+            role=role,
+            content=content
+        )
+        session.add(message)
+        session.commit()
+        logger.info(f"Added {role} message to session_id: {session_id}")
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Database error in add_chat_message: {str(e)}")
+        # Don't raise here to prevent breaking the chat flow if message storage fails
+    finally:
+        session.close()
 
 def get_chat_history(session_id):
     """
     Get all messages in a chat session
     """
     session = Session()
-    messages = session.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
-    ).order_by(ChatMessage.created_at).all()
-    
-    history = [(msg.role, msg.content) for msg in messages]
-    session.close()
-    return history
+    try:
+        messages = session.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).order_by(ChatMessage.created_at).all()
+        
+        history = [(msg.role, msg.content) for msg in messages]
+        logger.info(f"Retrieved {len(history)} messages for session_id: {session_id}")
+        return history
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_chat_history: {str(e)}")
+        return []
+    finally:
+        session.close()
 
 def get_chat_sessions_for_website(website_id):
     """
     Get all chat sessions for a website
     """
     session = Session()
-    chat_sessions = session.query(ChatSession).filter(
-        ChatSession.website_id == website_id
-    ).order_by(ChatSession.created_at.desc()).all()
-    
-    sessions = [(chat.id, chat.created_at) for chat in chat_sessions]
-    session.close()
-    return sessions
+    try:
+        chat_sessions = session.query(ChatSession).filter(
+            ChatSession.website_id == website_id
+        ).order_by(ChatSession.created_at.desc()).all()
+        
+        sessions = [(chat.id, chat.created_at) for chat in chat_sessions]
+        logger.info(f"Retrieved {len(sessions)} chat sessions for website_id: {website_id}")
+        return sessions
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_chat_sessions_for_website: {str(e)}")
+        return []
+    finally:
+        session.close()
 
 # Initialize the database on import
 init_db()
